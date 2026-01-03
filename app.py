@@ -4,14 +4,12 @@ import sys
 import time
 from datetime import datetime
 from stellar_sdk import Server, Keypair, TransactionBuilder, Network, Asset
-import schedule
 
 # Configuration
 config = configparser.ConfigParser()
 config.read('config.txt')
 
 DISTRIBUTOR_SECRET_KEY = config['DEFAULT'].get('DISTRIBUTOR_SECRET_KEY', '')
-INTERVAL_HOURS = float(config['DEFAULT'].get('INTERVAL_HOURS', 3))
 RECEIVER_ADDRESS = config['DEFAULT'].get('RECEIVER_ADDRESS', '')
 
 # Validation: Check if required configuration values are set
@@ -24,12 +22,15 @@ if RECEIVER_ADDRESS == '':
     sys.exit(1)
 
 # Constants
-NETWORK_PASSPHRASE = Network.PUBLIC_NETWORK_PASSPHRASE
 HORIZON_URL = "https://horizon.stellar.org"
 
 # Stellar SDK Setup
 server = Server(HORIZON_URL)
-distributor_keypair = Keypair.from_secret(DISTRIBUTOR_SECRET_KEY)
+DISTRIBUTOR_KP = Keypair.from_secret(DISTRIBUTOR_SECRET_KEY)
+DISTRIBUTOR_ADDRESS = DISTRIBUTOR_KP.public_key
+
+SEND_PERCENT = 0.25   # 25%
+MIN_INCOMING_XLM = 0  # optional threshold
 
 # Ensure the logs directory exists
 os.makedirs('logs', exist_ok=True)
@@ -51,47 +52,35 @@ def log_result(log_filename, destination_address, amount, success, message=""):
     with open(log_filename, 'a') as log_file:
         log_file.write(log_message)
 
-def get_distributor_balance():
-    """Fetch the current balance of the distributor's account."""
-    try:
-        distributor_account = server.accounts().account_id(distributor_keypair.public_key).call()
-        for balance in distributor_account['balances']:
-            if balance['asset_type'] == 'native':  # Get native XLM balance
-                return float(balance['balance'])
-        raise Exception("No native balance found in the account.")
-    except Exception as e:
-        print(f"Error fetching distributor balance: {e}")
-        return 0  # Return 0 if there's an issue
-
-def send_payment(log_filename, destination_address, amount, min_gas_fee = 100):
+def send_payment(log_filename, destination_address, amount: float, min_gas_fee=100):
     """Send native XLM to the specified receiver."""
     try:
         # Load the distributor's account
-        distributor_account = server.load_account(distributor_keypair.public_key)
+        account = server.load_account(DISTRIBUTOR_ADDRESS)
 
         # Fetch base fee and ensure it's at least 100
         base_fee = server.fetch_base_fee()
         base_fee = max(base_fee, min_gas_fee)
 
         # Build the transaction
-        transaction = (
+        tx = (
             TransactionBuilder(
-                source_account=distributor_account,
-                network_passphrase=NETWORK_PASSPHRASE,
-                base_fee=base_fee
+                source_account=account,
+                network_passphrase=Network.PUBLIC_NETWORK_PASSPHRASE,
+                base_fee=base_fee,
             )
             .append_payment_op(
                 destination=destination_address,
                 amount=str(amount),
-                asset=Asset.native()
+                asset=Asset.native(),
             )
-            .set_timeout(100)
+            .set_timeout(60)
             .build()
         )
 
         # Sign and submit the transaction
-        transaction.sign(distributor_keypair)
-        response = server.submit_transaction(transaction)
+        tx.sign(DISTRIBUTOR_KP)
+        response = server.submit_transaction(tx)
 
         if response.get('successful', False):
             log_result(log_filename, destination_address, amount, True)
@@ -127,9 +116,9 @@ def send_payment(log_filename, destination_address, amount, min_gas_fee = 100):
             e.extras['result_codes'].get('transaction') == 'tx_insufficient_fee'
         ):
             if min_gas_fee < 2000:
-                print("Insufficient fee. Retrying with "+ str(2 * min_gas_fee) +" Stroops...")
+                print(f"Insufficient fee. Retrying with {2 * min_gas_fee} Stroops...")
                 time.sleep(1)  # Brief delay before retrying
-                send_payment(log_filename, destination_address, amount, 2 * min_gas_fee )
+                send_payment(log_filename, destination_address, amount, 2 * min_gas_fee)
             else:
                 error_message = "Transaction Failed: Network is too busy at this time. Please try again this transaction at further time."
                 log_result(log_filename, destination_address, amount, False, error_message)
@@ -142,36 +131,67 @@ def send_payment(log_filename, destination_address, amount, min_gas_fee = 100):
             len(e.extras['result_codes'].get('operations')) > 0 and
             e.extras['result_codes'].get('operations')[0] == "op_underfunded"
         ):            
-            error_message = f"Transaction failed: XLM amount is insufficient in distribution account."
-            log_result(log_filename, destination_address, amount, False, error_message)        
+            error_message = "Transaction failed: XLM amount is insufficient in distribution account."
+            log_result(log_filename, destination_address, amount, False, error_message)
         else:
             error_message = f"Transaction failed: {e}"
             log_result(log_filename, destination_address, amount, False, error_message)
 
-def job():
-    """Scheduled job to send payment."""
+def handle_payment(payment):
+    # Only payment ops
+    if payment.get("type") != "payment":
+        return
+
+    # Only native XLM
+    if payment.get("asset_type") != "native":
+        return
+
+    # Incoming only
+    if payment.get("to") != DISTRIBUTOR_ADDRESS:
+        return
+
+    # Ignore self-payments
+    if payment.get("from") == DISTRIBUTOR_ADDRESS:
+        return
+
+    incoming = float(payment.get("amount", "0"))
+    if incoming < MIN_INCOMING_XLM:
+        return
+
+    send_amount = round(incoming * SEND_PERCENT, 7)
+    if send_amount <= 0:
+        return
+
+    print(
+        f"\n💰 {datetime.utcnow()} | Incoming {incoming} XLM "
+        f"from {payment.get('from')}"
+    )
+    print(f"➡️  Sending 25% = {send_amount} XLM")
+
+    # Create a log file with a timestamp
+    log_filename = f"logs/log_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+
     try:
-        # Create a log file with a timestamp
-        log_filename = f"logs/log_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
-
-        balance = get_distributor_balance()
-        if balance <= 0:
-            log_result(log_filename, RECEIVER_ADDRESS, 0, False, "Insufficient balance")
-            return
-
-        amount = round(balance * 0.25, 7)  # Calculate 25% of the balance, rounded to 7 decimals
-        print(f"Starting transaction at {datetime.now()} with amount: {amount} XLM")
-        send_payment(log_filename, RECEIVER_ADDRESS, amount)
+        send_payment(log_filename, RECEIVER_ADDRESS, send_amount)
     except Exception as e:
-        print(f"An error occurred during the job: {e}")
+        print(f"❌ Error sending payment: {e}")
 
-# Schedule the job
-schedule.every(INTERVAL_HOURS).hours.do(job)
+def main():
+    print("🚀 AQS 25% bot started")
+    print(f"👂 Listening for NEW incoming XLM payments to {DISTRIBUTOR_ADDRESS}")
+    print("⏱️  Cursor = now (old transactions ignored)\n")
+    
+    cursor = "now"
 
-# Run the job immediately
-job()
+    while True:
+        try:
+            payments = server.payments().for_account(DISTRIBUTOR_ADDRESS).cursor(cursor)
+            for payment in payments.stream():
+                handle_payment(payment)
 
-# Keep the bot running
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+        except Exception as e:
+            print(f"⚠️ Stream error: {e}")
+            time.sleep(5)
+
+if __name__ == "__main__":
+    main()
