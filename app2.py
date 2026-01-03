@@ -52,10 +52,6 @@ def log_result(log_filename, destination_address, amount, success, message=""):
     with open(log_filename, 'a') as log_file:
         log_file.write(log_message)
 
-print("🚀 AQS 25% bot started")
-print(f"👂 Listening for NEW incoming XLM payments to {DISTRIBUTOR_ADDRESS}")
-print("⏱️  Cursor = now (old transactions ignored)\n")
-
 def send_payment(log_filename, destination_address, amount: float, min_gas_fee=100):
     """Send native XLM to the specified receiver."""
     try:
@@ -181,7 +177,11 @@ def handle_payment(payment):
         print(f"❌ Error sending payment: {e}")
 
 def main():
-    cursor = "now"  # 🔥 THIS IS THE KEY PART
+    print("🚀 AQS 25% bot started")
+    print(f"👂 Listening for NEW incoming XLM payments to {DISTRIBUTOR_ADDRESS}")
+    print("⏱️  Cursor = now (old transactions ignored)\n")
+    
+    cursor = "now"
 
     while True:
         try:
