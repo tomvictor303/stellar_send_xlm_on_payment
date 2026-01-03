@@ -189,7 +189,7 @@ def main():
     print("🚀 AQS 25% bot started")
     print(f"👂 Listening for incoming XLM to {DISTRIBUTOR_ADDRESS}")
 
-    cursor = load_cursor()
+    cursor = "now" # For flexibility, we're not using the cursor file
     print(f"⏱️  Cursor = {cursor}\n")
 
     while True:
