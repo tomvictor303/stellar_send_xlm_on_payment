@@ -2,7 +2,7 @@ import configparser
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, UTC
 from decimal import Decimal, ROUND_DOWN
 
 from stellar_sdk import Server, Keypair, TransactionBuilder, Network, Asset
@@ -46,7 +46,7 @@ os.makedirs("logs", exist_ok=True)
 # Logging
 # =========================
 def log_result(log_filename, destination_address, amount, success, message=""):
-    log_message = f"{datetime.utcnow()} - Transaction to {destination_address} for {amount} XLM: "
+    log_message = f"{datetime.now(UTC)} - Transaction to {destination_address} for {amount} XLM: "
     log_message += "Success\n" if success else f"Failed - {message}\n"
 
     print(log_message)
@@ -161,12 +161,12 @@ def handle_payment(payment):
         return
 
     print(
-        f"\n💰 {datetime.utcnow()} | Incoming {incoming} XLM "
+        f"\n💰 {datetime.now(UTC)} | Incoming {incoming} XLM "
         f"from {payment.get('from')}"
     )
     print(f"➡️  Sending 25% = {send_amount} XLM")
 
-    log_filename = f"logs/log_{datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+    log_filename = f"logs/log_{datetime.now(UTC).strftime('%Y-%m-%d_%H-%M-%S')}.txt"
     send_payment(log_filename, RECEIVER_ADDRESS, send_amount)
 
 # =========================
