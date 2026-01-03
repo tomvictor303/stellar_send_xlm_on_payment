@@ -43,19 +43,6 @@ DISTRIBUTOR_ADDRESS = DISTRIBUTOR_KP.public_key
 os.makedirs("logs", exist_ok=True)
 
 # =========================
-# Cursor helpers
-# =========================
-def load_cursor():
-    if os.path.exists(CURSOR_FILE):
-        with open(CURSOR_FILE, "r") as f:
-            return f.read().strip()
-    return "now"
-
-def save_cursor(cursor):
-    with open(CURSOR_FILE, "w") as f:
-        f.write(cursor)
-
-# =========================
 # Logging
 # =========================
 def log_result(log_filename, destination_address, amount, success, message=""):
@@ -189,7 +176,7 @@ def main():
     print("🚀 AQS 25% bot started")
     print(f"👂 Listening for incoming XLM to {DISTRIBUTOR_ADDRESS}")
 
-    cursor = "now" # For flexibility, we're not using the cursor file
+    cursor = "now"
     print(f"⏱️  Cursor = {cursor}\n")
 
     while True:
