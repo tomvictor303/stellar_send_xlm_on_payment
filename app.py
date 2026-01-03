@@ -185,7 +185,6 @@ def main():
 
             for payment in payments.stream():
                 cursor = payment["paging_token"]
-                save_cursor(cursor)
                 handle_payment(payment)
 
         except Exception as e:
